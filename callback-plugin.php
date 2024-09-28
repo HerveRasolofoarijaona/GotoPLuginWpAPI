@@ -83,24 +83,49 @@ function logmein_options_page() {
         do_settings_sections('logmein-auth');
         submit_button();
         ?>
+    </form>
 
         <!-- Ajouter un bouton pour lier à OAuth -->
+
+        <form id="logmein-auth-form">
         <h3>OAuth Authentication</h3>
         <p>
             Cliquez sur le bouton ci-dessous pour vous rediriger vers l'authentification OAuth de LogMeIn.
         </p>
+        <button id="logmein-auth-button" type="button" class="button button-primary">Se connecter via LogMeIn OAuth</button>
+        <div id="logmein-auth-result"></div>
     </form>
-    <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="POST">
-            <input type="hidden" name="action" value="logmein_auth_redirect">
-            <input type="submit" value="Se connecter via LogMeIn OAuth" class="button button-primary">
-    </form>
+
+    <?php
+
+    $ajax_nonce = wp_create_nonce('logmein_auth_nonce');
+
+    ?>
+
+    <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            $('#logmein-auth-button').on('click', function() {
+                var data = {
+                    action: 'logmein_auth_ajax',
+                    security : logemeinNonce
+                };
+
+                $.post(ajaxurl, data, function(response) {
+                    $('#logmein-auth-result').html(response);
+                });
+            });
+        });
+    </script>
     <?php
 }
 
 // === Partie 2 : Redirection vers l'URL OAuth de LogMeIn ===
 
-add_action('admin_post_logmein_auth_redirect', 'logmein_auth_redirect');
-function logmein_auth_redirect() {
+add_action('wp_ajax_logmein_auth_ajax', 'logmein_auth_ajax_handler');
+
+function logmein_auth_ajax_handler() {
+
+    check_ajax_referer('logmein_auth_nonce', 'security'); 
     $client_id = get_option('logmein_client_id');
     $redirect_uri = get_option('logmein_redirect_uri', site_url('/wp-json/data-receiver/v1/submit'));
 
@@ -116,28 +141,48 @@ function logmein_auth_redirect() {
                 }
                 showAuthDialog();
             </script>';
-        exit;
-    
-    }
-        
-        // Redirection vers l'URL OAuth
-        //wp_redirect($oauth_url);
-        /*
-        exit;
+
+        // Envoyer la requête OAuth
+        $response = wp_remote_get($oauth_url);
+
+        if (is_wp_error($response)) {
+            wp_die('Erreur lors de la requête OAuth : ' . $response->get_error_message());
+        }
+
+        // Message indiquant que la requête OAuth a été envoyée
+        echo '<p>Requête OAuth envoyée avec succès. En attente de données...</p>';
+
+        // Récupérer les dernières données soumises via l'API REST
+        $received_data = get_option('received_data');
+
+        if ($received_data) {
+            // Convertir les données JSON en tableau PHP
+            $data = json_decode($received_data, true);
+
+            // Afficher les données reçues
+            echo '<h3>Dernières données reçues :</h3>';
+            echo '<pre>' . print_r($data, true) . '</pre>';
+        } else {
+            echo '<p>Aucune donnée reçue pour le moment.</p>';
+        }
     } else {
-        wp_die('Client ID or Redirect URI not set.');
-    }*/
+        wp_die('Client ID ou Redirect URI non défini.');
+    }
+
+    wp_die(); // Terminer le script
 }
+
+
 
 // === Partie 3 : Réception des données via l'API REST ===
 
 add_action('rest_api_init', function () {
     register_rest_route('data-receiver/v1', '/submit', array(
-        'methods' => 'POST',
+        'methods' => array('POST', 'GET'),
         'callback' => 'handle_data_submission',
         'permission_callback' => '__return_true',
     ));
- });
+});
 
 function handle_data_submission(WP_REST_Request $request) {
     // Récupérer les données envoyées via POST
